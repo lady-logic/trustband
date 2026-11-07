@@ -16,7 +16,7 @@
   const STELLE = { fach: 47500, azubi: 16000 };
 
   const S = {
-    tol: 1.5, mode: "vertrauen", scen: null, selected: null, hot: null, showAll: false, vsite: "arlinger",
+    tol: 1.5, mode: "vertrauen", scen: null, showTemps: false, selected: null, hot: null, showAll: false, vsite: "arlinger",
     eco: { stelle: "fach", brutto: 47500, lnk: 21, n: D.sites.length, years: 5, cheap: D.prices.cheap, exp: D.prices.expensive,
       refs: D.refs.length, calDays: D.calDays, tracker: 150, season: 150, hours: 2, hoursYear: 1600 },
   };
@@ -139,6 +139,11 @@
     const lo = v - row.p95 * s.bandScale, hi = v - row.p05 * s.bandScale;
     return { v, lo, hi, kind: hi < 0 ? "frost" : lo > 0 ? "clear" : "gray" };
   }
+  function tempLabel(s) {
+    if (!S.showTemps) return "";
+    const v = S.mode === "streuen" ? valueOf(s) : (liveOf(s) || {}).value;
+    return typeof v === "number" ? `<span class="tl">${num(v, 1)} °</span>` : "";
+  }
   const markerColor = (s) => { if (S.mode !== "streuen") return COL[s.status]; const d = decide(s); return d ? DEC[d.kind].c : COL.uncalibrated; };
   function strip(d) {
     const W = 260, H = 72, lo0 = Math.min(-3, d.lo - 1), hi0 = Math.max(4, d.hi + 1), X = (v) => 6 + ((v - lo0) / (hi0 - lo0)) * (W - 12), c = DEC[d.kind].c;
@@ -160,6 +165,8 @@
     document.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("on", b.dataset.mode === S.mode));
     const wi = $("#whatif"), m = liveMean();
     wi.hidden = S.mode !== "streuen";
+    $("#tbtn").classList.toggle("on", S.showTemps);
+    $("#tbtn").textContent = S.showTemps ? "Temperaturen ausblenden" : "Temperaturen anzeigen";
     $("#wi").value = S.scen !== null ? S.scen : m !== null ? Math.round(m * 2) / 2 : 2;
     $("#wv").textContent = S.scen !== null ? "Ø " + num(S.scen, 1) + " °C" : m !== null ? "Ø " + num(m, 1) + " °C" : "–";
     $("#wl").textContent = S.scen !== null ? "Simulation" : m !== null ? "Live-Werte" : "";
@@ -278,7 +285,7 @@
     const hotSite = sites.find((s) => s.id === S.hot);
     for (const s of sites) {
       const cls = [S.selected === s.id ? "sel" : "", hotSite ? (hotSite.id === s.id ? "hot" : "dim") : ""].join(" ");
-      const icon = L.divIcon({ className: "", iconSize: [18, 18], iconAnchor: [9, 9], html: `<div class="mk ${cls}" style="background:${markerColor(s)}"></div>` });
+      const icon = L.divIcon({ className: "", iconSize: [18, 18], iconAnchor: [9, 9], html: `<div class="mk ${cls}" style="background:${markerColor(s)}"></div>${tempLabel(s)}` });
       if (!markers[s.id]) {
         markers[s.id] = L.marker([s.lat, s.lon], { icon }).addTo(map)
           .bindTooltip(tip(s), { direction: "top", offset: [0, -9] })
@@ -471,6 +478,11 @@
   });
   split.addEventListener("pointerup", () => { split.classList.remove("drag"); map.invalidateSize(); });
 
+  $("#tbtn").addEventListener("click", () => {
+    S.showTemps = !S.showTemps;
+    if (S.showTemps && liveMean() === null && S.scen === null) toast("Noch keine Temperaturen. Oben auf „Live-Daten“ klicken.", null, "warn");
+    renderAll();
+  });
   $("#wi").addEventListener("input", (e) => { S.scen = +e.target.value; renderAll(); });
   $("#wlive").addEventListener("click", () => { S.scen = null; renderAll(); });
 

@@ -79,6 +79,9 @@ aside{width:440px;min-width:320px;background:#fff;display:flex;flex-direction:co
 .mseg{display:flex;background:#fff;border-radius:9px;padding:4px;box-shadow:0 1px 6px rgba(0,0,0,.25)}
 .mseg button{flex:1;border:0;background:none;padding:10px;border-radius:6px;font-size:15px;font-weight:700;color:var(--slate)}
 .mseg button.on{background:var(--ink);color:#fff}
+.tbtn{border:0;background:#fff;border-radius:9px;padding:11px 14px;font-size:15px;font-weight:700;color:var(--slate);box-shadow:0 1px 6px rgba(0,0,0,.25);text-align:left}
+.tbtn:hover{color:var(--ink)}.tbtn.on{background:var(--ink);color:#fff}
+.tl{position:absolute;left:24px;top:-3px;background:#fff;color:var(--ink);font-size:13px;font-weight:800;padding:1px 6px;border-radius:5px;box-shadow:0 1px 4px rgba(0,0,0,.35);white-space:nowrap;pointer-events:none}
 .whatif{background:#fff;border-radius:10px;padding:14px 16px;box-shadow:0 1px 6px rgba(0,0,0,.25)}
 .wt{display:flex;justify-content:space-between;align-items:baseline;font-weight:700;color:var(--slate)}
 .wt b{font-size:26px;color:var(--ink);letter-spacing:-.02em;white-space:nowrap}
