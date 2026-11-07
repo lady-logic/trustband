@@ -369,9 +369,10 @@
   function renderVertrauen() {
     document.querySelectorAll("[data-vsite]").forEach((b) => b.classList.toggle("on", b.dataset.vsite === S.vsite));
     $("#tolv").textContent = "± " + num(S.tol, 2) + " °C";
-    const real = D.sites.find((s) => s.profile === S.vsite && s.real), t = trustDays(real), bands = D.bands[S.vsite].slice(0, 3);
+    const real = D.sites.find((s) => s.profile === S.vsite && s.real), t = trustDays(real), mm = D.model[S.vsite];
     $("#v-big").innerHTML = `<div class="big">${t >= TRUST_CAP ? "≥ " : ""}${t}<small>Tage Vertrauen</small></div>
-      <div class="cap">Fehler ${num(bands[0].mae_roh)} → ${num(bands[0].mae_cal)} °C nach Kalibrierung</div>`;
+      <div class="cap">Gilt bei Kälte (unter ${mm.cold_below_c} °C) · Modell: ${mm.label}</div>
+      <div class="cap">Fehler bei Kälte: roh ${num(mm.mae_roh_cold_0_7)} → ${num(mm.mae_cal_cold_0_7)} °C · alle Temperaturen: ${num(mm.mae_roh_all_0_7)} → ${num(mm.mae_cal_all_0_7)} °C</div>`;
     const rows = D.daily[S.vsite], W = 380, H = 270;
     const box = $("#v-funnel");
     box.innerHTML = funnel(rows, 1, S.tol, { w: W, h: H, trust: t, id: "big" });
@@ -427,7 +428,7 @@
       <div class="tr"><div style="width:${(sens / max) * 100}%;background:${hl ? RUST : "#9C9890"}"></div><div style="width:${(pers / max) * 100}%;background:${COL.expiring}"></div></div></div>`;
     $("#saving").textContent = eur(saving);
     $("#save-y").textContent = yrs;
-    $("#k-hero").innerHTML = `<div class="hero"><small>Ersparnis in ${yrs} Jahren</small><b>${eur(saving)}</b><span>${Math.round((saving / allExp) * 100)} % weniger als nur teure Sensoren</span></div>`;
+    $("#k-hero").innerHTML = `<div class="hero"><small>Ersparnis in ${yrs} Jahren</small><b>${eur(saving)}</b><span>${saving > 0 ? Math.round((saving / allExp) * 100) + " % weniger als nur teure Sensoren" : "Bei diesen Annahmen kein Vorteil"}</span></div>`;
     $("#k-out").innerHTML = `
       ${bar("Nur teure Sensoren", allExp, 0, false)}${bar("Günstige überall", allSens, allPers, false)}${bar("Mix (empfohlen)", mixSens, mixPers, true)}
       <div class="cap">Personal ≈ ${num(fte, 1)} % einer Stelle · ${eur(hourly)}/Std. · ${eur(trip)} je Eichung</div>`;

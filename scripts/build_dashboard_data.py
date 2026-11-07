@@ -96,7 +96,8 @@ def main():
         "calDays": results["cal_days"],
         "prices": PRICES,
         "bands": build_bands(results),
-        "daily": daily,
+        "daily": {k: v["rows"] for k, v in daily.items()},
+        "model": {k: v["meta"] for k, v in daily.items()},
         "refs": refs,
         "sites": sites,
     }
