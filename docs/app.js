@@ -16,7 +16,7 @@
   const STELLE = { fach: 47500, azubi: 16000 };
 
   const S = {
-    tol: 1.5, selected: null, hot: null, showAll: false, gpsFault: false, vsite: "arlinger",
+    tol: 1.5, mode: "vertrauen", scen: null, selected: null, hot: null, showAll: false, vsite: "arlinger",
     eco: { stelle: "fach", brutto: 47500, lnk: 21, n: D.sites.length, years: 5, cheap: D.prices.cheap, exp: D.prices.expensive,
       refs: D.refs.length, calDays: D.calDays, tracker: 150, season: 150, hours: 2, hoursYear: 1600 },
   };
@@ -37,7 +37,7 @@
   /* Trichter: Band (5.-95. Perzentil des Fehlers) je Tag seit der Eichung */
   function funnel(rows, scale, tol, o) {
     const W = o.w, H = o.h, DAYS = TRUST_CAP, ymax = o.mini ? 2.2 : 2.5;
-    const p = o.mini ? { l: 2, r: 2, t: 3, b: 3 } : { l: 40, r: 12, t: 14, b: 30 };
+    const p = o.mini ? { l: 2, r: 2, t: 3, b: 3 } : { l: 40, r: 12, t: 14, b: 46 };
     const X = (d) => p.l + (d / DAYS) * (W - p.l - p.r);
     const Y = (v) => p.t + (1 - (v + ymax) / (2 * ymax)) * (H - p.t - p.b);
     const pts = rows.slice(0, DAYS + 1);
@@ -45,20 +45,21 @@
     const zy = Y(tol), zh = Y(-tol) - Y(tol), zw = W - p.l - p.r;
     let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Vertrauensband über die Zeit"><defs><clipPath id="c${o.id}"><rect x="${p.l}" y="${zy}" width="${zw}" height="${zh}"/></clipPath></defs>
       <rect x="${p.l}" y="${zy}" width="${zw}" height="${zh}" fill="rgba(47,107,71,.09)"/>
-      <polygon points="${poly}" fill="${COL.expired}" fill-opacity=".42"/>
-      <polygon points="${poly}" fill="${COL.valid}" fill-opacity=".6" clip-path="url(#c${o.id})"/>
+      <g opacity="${o.sim ? 0.5 : 1}"><polygon points="${poly}" fill="${COL.expired}" fill-opacity=".42"/>
+      <polygon points="${poly}" fill="${COL.valid}" fill-opacity=".6" clip-path="url(#c${o.id})"/></g>
       <line x1="${p.l}" x2="${W - p.r}" y1="${Y(0)}" y2="${Y(0)}" stroke="#8A867F" stroke-dasharray="3 4"/>
       <line x1="${p.l}" x2="${W - p.r}" y1="${zy}" y2="${zy}" stroke="${COL.valid}" stroke-width="${o.mini ? 1 : 2}"/>
       <line x1="${p.l}" x2="${W - p.r}" y1="${zy + zh}" y2="${zy + zh}" stroke="${COL.valid}" stroke-width="${o.mini ? 1 : 2}"/>`;
     if (o.mini) {
+      if (o.sim) s += `<text x="${W - 4}" y="11" text-anchor="end" style="font-size:10px;font-weight:700">Beispielprofil</text>`;
       if (o.age !== null && o.age !== undefined) {
         const a = Math.min(o.age, DAYS);
         s += `<line x1="${X(a)}" x2="${X(a)}" y1="${p.t}" y2="${H - p.b}" stroke="${RUST}" stroke-width="2"/><circle cx="${X(a)}" cy="${Y(0)}" r="4" fill="${RUST}" stroke="#fff" stroke-width="1.5"/>`;
       }
     } else {
       s += `<text x="${p.l - 6}" y="${zy + 4}" text-anchor="end">+${num(tol, 1)}</text><text x="${p.l - 6}" y="${zy + zh + 4}" text-anchor="end">−${num(tol, 1)}</text><text x="${p.l - 6}" y="${Y(0) + 4}" text-anchor="end">0</text>`;
-      for (const d of [0, 7, 14, 21, 30]) s += `<text x="${X(d)}" y="${H - 8}" text-anchor="middle">${d}</text>`;
-      s += `<text x="${W - p.r}" y="${H - 8}" text-anchor="end" style="font-weight:700">Tage seit Eichung</text>`;
+      for (const d of [0, 7, 14, 21, 30]) s += `<text x="${X(d)}" y="${H - 28}" text-anchor="middle">${d}</text>`;
+      s += `<text x="${(p.l + W - p.r) / 2}" y="${H - 6}" text-anchor="middle" style="font-weight:700">Tage seit Eichung</text>`;
       if (o.trust < DAYS) s += `<line x1="${X(o.trust)}" x2="${X(o.trust)}" y1="${p.t}" y2="${H - p.b}" stroke="${RUST}" stroke-width="2.5" stroke-dasharray="6 4"/><text x="${X(o.trust) + (o.trust > 20 ? -6 : 6)}" y="${p.t + 10}" text-anchor="${o.trust > 20 ? "end" : "start"}" style="fill:${RUST};font-weight:800;font-size:13px">Vertrauen endet Tag ${o.trust}</text>`;
       s += `<line id="fcur" y1="${p.t}" y2="${H - p.b}" stroke="#141412" stroke-width="1.5" visibility="hidden"/>`;
     }
@@ -92,7 +93,7 @@
   }
 
   function gpsOf(r) {
-    const gps = { lat: r.lat + 0.00003 + (S.gpsFault && r.id === "refB" ? 0.0016 : 0), lon: r.lon + 0.00002 };
+    const gps = { lat: r.lat + 0.00003, lon: r.lon + 0.00002 };
     let near = null;
     for (const s of D.sites) { const m = km(gps, s) * 1000; if (!near || m < near.m) near = { s, m }; }
     return { ...gps, near: near.s, m: Math.round(near.m), ok: near.m <= GPS_RADIUS_M && near.s.id === r.site };
@@ -120,7 +121,65 @@
     const v = liveOf(s);
     return v ? `<div class="live">Jetzt <b>${num(v.value, 1)} ${v.unit}</b><small>${v.name} · ${hhmm(v.time)}</small></div>` : "";
   }
-  const tip = (s) => { const v = liveOf(s); return v ? `${s.name} · ${num(v.value, 1)} ${v.unit}` : s.name; };
+  /* ---------- Streuen oder nicht ---------- */
+  const DEC = { frost: { c: "#1F5FA8", l: "Frost: streuen" }, gray: { c: "#B87A0E", l: "Grauzone: streuen empfohlen" }, clear: { c: "#2F6B47", l: "Kein Frost" } };
+  function liveMean() {
+    const v = D.sites.map((s) => liveOf(s)).filter(Boolean).map((x) => x.value);
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  }
+  function valueOf(s) {
+    const lv = liveOf(s), m = liveMean();
+    if (S.scen !== null) return S.scen + (lv && m !== null ? lv.value - m : 0);
+    return lv ? lv.value : null;
+  }
+  function decide(s) {
+    const v = valueOf(s);
+    if (v === null) return null;
+    const row = D.daily[s.profile][Math.min(s.lastCalAge === null ? 59 : s.lastCalAge, 59)];
+    const lo = v - row.p95 * s.bandScale, hi = v - row.p05 * s.bandScale;
+    return { v, lo, hi, kind: hi < 0 ? "frost" : lo > 0 ? "clear" : "gray" };
+  }
+  const markerColor = (s) => { if (S.mode !== "streuen") return COL[s.status]; const d = decide(s); return d ? DEC[d.kind].c : COL.uncalibrated; };
+  function strip(d) {
+    const W = 260, H = 72, lo0 = Math.min(-3, d.lo - 1), hi0 = Math.max(4, d.hi + 1), X = (v) => 6 + ((v - lo0) / (hi0 - lo0)) * (W - 12), c = DEC[d.kind].c;
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Messwert mit Band"><rect x="6" y="24" width="${X(0) - 6}" height="26" fill="rgba(31,95,168,.12)"/>
+      <line x1="${X(0)}" x2="${X(0)}" y1="18" y2="56" stroke="#141412" stroke-width="2"/><text x="${X(0)}" y="13" text-anchor="middle" style="font-weight:700">0 °C</text>
+      <rect x="${X(d.lo)}" y="31" width="${Math.max(2, X(d.hi) - X(d.lo))}" height="12" rx="6" fill="${c}" opacity=".85"/>
+      <circle cx="${X(d.v)}" cy="37" r="7" fill="#fff" stroke="${c}" stroke-width="3.5"/>
+      <text x="${X(d.lo)}" y="68" text-anchor="end">${num(d.lo, 1)}</text><text x="${X(d.hi)}" y="68" text-anchor="start">${num(d.hi, 1)}</text></svg>`;
+  }
+  function streuBlock(s) {
+    const d = decide(s);
+    if (!d) return '<div class="live"><small>Keine Messwerte. Live-Daten abrufen oder Szenario wählen.</small></div>';
+    const lv = liveOf(s), m = liveMean();
+    const dev = S.scen !== null && lv && m !== null ? lv.value - m : null;
+    const devTxt = dev !== null && Math.abs(dev) >= 0.5 ? `<small>Dieser Standort ist ${num(Math.abs(dev), 1)} °C ${dev > 0 ? "wärmer" : "kälter"} als der Durchschnitt</small>` : "";
+    return `<div class="dec" style="color:${DEC[d.kind].c}">${DEC[d.kind].l}</div><div class="live">Messwert <b>${num(d.v, 1)} °C</b><small>wahrer Wert ${num(d.lo, 1)} bis ${num(d.hi, 1)} °C</small>${devTxt}</div><div class="fun">${strip(d)}</div>`;
+  }
+  function renderMapUI(sites) {
+    document.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("on", b.dataset.mode === S.mode));
+    const wi = $("#whatif"), m = liveMean();
+    wi.hidden = S.mode !== "streuen";
+    $("#wi").value = S.scen !== null ? S.scen : m !== null ? Math.round(m * 2) / 2 : 2;
+    $("#wv").textContent = S.scen !== null ? "Ø " + num(S.scen, 1) + " °C" : m !== null ? "Ø " + num(m, 1) + " °C" : "–";
+    $("#wl").textContent = S.scen !== null ? "Simulation" : m !== null ? "Live-Werte" : "";
+    $("#wlive").hidden = !(S.scen !== null && m !== null);
+    let items;
+    if (S.mode === "streuen") {
+      const cnt = { frost: 0, gray: 0, clear: 0 };
+      sites.forEach((x) => { const d = decide(x); if (d) cnt[d.kind]++; });
+      items = Object.keys(DEC).map((k) => `<span><i style="background:${DEC[k].c}"></i>${DEC[k].l.split(":")[0]} ${cnt[k]}</span>`);
+    } else {
+      const names = { valid: "gültig", expiring: "läuft ab", expired: "abgelaufen", uncalibrated: "nie kalibriert" };
+      items = Object.keys(names).map((k) => `<span><i style="background:${COL[k]}"></i>${names[k]}</span>`);
+    }
+    $("#legend").innerHTML = items.join("") + `<span>${diamond(RUST, 14)} Referenz</span>`;
+  }
+
+  const tip = (s) => {
+    if (S.mode === "streuen") { const d = decide(s); return d ? `${s.name} · ${num(d.v, 1)} °C · ${DEC[d.kind].l}` : s.name; }
+    const v = liveOf(s); return v ? `${s.name} · ${num(v.value, 1)} ${v.unit}` : s.name;
+  };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let toastTimer = null;
@@ -219,7 +278,7 @@
     const hotSite = sites.find((s) => s.id === S.hot);
     for (const s of sites) {
       const cls = [S.selected === s.id ? "sel" : "", hotSite ? (hotSite.id === s.id ? "hot" : "dim") : ""].join(" ");
-      const icon = L.divIcon({ className: "", iconSize: [18, 18], iconAnchor: [9, 9], html: `<div class="mk ${cls}" style="background:${COL[s.status]}"></div>` });
+      const icon = L.divIcon({ className: "", iconSize: [18, 18], iconAnchor: [9, 9], html: `<div class="mk ${cls}" style="background:${markerColor(s)}"></div>` });
       if (!markers[s.id]) {
         markers[s.id] = L.marker([s.lat, s.lon], { icon }).addTo(map)
           .bindTooltip(tip(s), { direction: "top", offset: [0, -9] })
@@ -247,6 +306,7 @@
   /* ---------- Rendering ---------- */
   function renderAll() {
     const sites = enrich(), waiting = waitingOf(sites);
+    renderMapUI(sites);
     renderBetrieb(sites, waiting);
     renderDetail(sites);
     renderVertrauen();
@@ -275,8 +335,7 @@
     $("#tab-betrieb").innerHTML = `
       <div class="stats">${stat(ok, "gültig", COL.valid)}${stat(waiting.length, "Warteliste", COL.expired)}${stat(D.refs.length, "Referenzen frei", RUST)}</div>
       <div class="sh">Warteliste</div>${wl}${more}
-      <div class="sh">Referenzsensoren</div>${refs}
-      <button class="link" data-gps>${S.gpsFault ? "GPS-Prüfung zurücksetzen" : "GPS-Prüfung simulieren"}</button>`;
+      <div class="sh">Referenzsensoren</div>${refs}`;
   }
 
   function renderDetail(sites) {
@@ -292,7 +351,7 @@
         <div><div class="nm">${s.name}</div><div class="st" style="color:${c}">${LABEL[s.status]}</div></div>
         <button class="x" data-close aria-label="Schließen">×</button></div>
       <div class="g"><div><small>Letzte Eichung</small><b>${last}</b></div><div><small>Noch gültig</small><b>${rem}</b></div></div>
-      ${liveLine(s)}<div class="fun">${funnel(D.daily[s.profile], s.bandScale, S.tol, { w: 260, h: 64, mini: true, age: s.lastCalAge, id: "m" })}</div>
+      ${S.mode === "streuen" ? streuBlock(s) : liveLine(s) + `<div class="fun">${funnel(D.daily[s.profile], s.bandScale, S.tol, { w: 260, h: 64, mini: true, age: s.lastCalAge, id: "m", sim: !s.real })}</div>`}
       ${n ? `<div class="nx">${n.ref.name} fährt hin · ${num(n.km, 1)} km</div>` : ""}
       <div class="src">${s.real ? "Echte Messdaten" : "Simuliert"} · Vertrauensdauer ${s.trust >= TRUST_CAP ? "≥ " : ""}${s.trust} Tage</div>`;
   }
@@ -313,7 +372,7 @@
     const real = D.sites.find((s) => s.profile === S.vsite && s.real), t = trustDays(real), bands = D.bands[S.vsite].slice(0, 3);
     $("#v-big").innerHTML = `<div class="big">${t >= TRUST_CAP ? "≥ " : ""}${t}<small>Tage Vertrauen</small></div>
       <div class="cap">Fehler ${num(bands[0].mae_roh)} → ${num(bands[0].mae_cal)} °C nach Kalibrierung</div>`;
-    const rows = D.daily[S.vsite], W = 380, H = 250;
+    const rows = D.daily[S.vsite], W = 380, H = 270;
     const box = $("#v-funnel");
     box.innerHTML = funnel(rows, 1, S.tol, { w: W, h: H, trust: t, id: "big" });
     const svg = box.firstChild, cur = svg.querySelector("#fcur"), hv = $("#v-hover");
@@ -361,7 +420,6 @@
     const mixPers = cheapOnes.reduce((a, s) => a + yrs * calPerYear(s) * trip, 0);
     const mix = mixSens + mixPers;
     const cal = cheapOnes.reduce((a, s) => a + calPerYear(s), 0);
-    const util = cheapOnes.length ? (cal / ((e.refs * e.season) / e.calDays)) * 100 : 0;
     const fte = ((cal * e.hours) / e.hoursYear) * 100;
     const saving = Math.max(0, allExp - mix);
     const max = Math.max(allExp, allSens + allPers, mix);
@@ -372,31 +430,20 @@
     $("#k-hero").innerHTML = `<div class="hero"><small>Ersparnis in ${yrs} Jahren</small><b>${eur(saving)}</b><span>${Math.round((saving / allExp) * 100)} % weniger als nur teure Sensoren</span></div>`;
     $("#k-out").innerHTML = `
       ${bar("Nur teure Sensoren", allExp, 0, false)}${bar("Günstige überall", allSens, allPers, false)}${bar("Mix (empfohlen)", mixSens, mixPers, true)}
-      <div class="facts"><div><b>${cheapOnes.length} / ${sites.length}</b><span>Standorte mit günstigem Sensor</span></div>
-        <div><b class="${util > 100 ? "bad" : ""}">${Math.round(util)} %</b><span>Referenzen ausgelastet</span></div></div>
       <div class="cap">Personal ≈ ${num(fte, 1)} % einer Stelle · ${eur(hourly)}/Std. · ${eur(trip)} je Eichung</div>`;
   }
 
-  /* ---------- Grenzen ---------- */
-  $("#tab-grenzen").innerHTML = `
-    <div class="chips"><span class="r">2 Standorte echt</span><span class="s">15 simuliert</span></div>
-    <div class="sh">Grenzen</div>
-    <ul class="list"><li>Jeder Sensor braucht seine eigene Eichung</li><li>Nur 2 Standorte, kaum Winterdaten</li>
-      <li>Frost verpasst: bis 53 von 300 (Arlinger, 14–30 Tage)</li><li>Referenz selbst ± 0,5 °C</li></ul>
-    <div class="sh">Nächste Schritte</div>
-    <ul class="list"><li>Pilot mit 2 Referenzen und GPS-Tracker</li><li>Live-Daten aus niotix</li><li>Einen Winter lang messen</li></ul>`;
-
   /* ---------- Events ---------- */
   document.addEventListener("click", (e) => {
-    const t = e.target.closest("[data-close],[data-tab],[data-more],[data-gps],[data-vsite],[data-stelle],.row[data-site]");
+    const t = e.target.closest("[data-close],[data-mode],[data-tab],[data-more],[data-vsite],[data-stelle],.row[data-site]");
     if (!t) return;
     const d = t.dataset;
     if (d.tab) return switchTab(d.tab);
     if (d.vsite) { S.vsite = d.vsite; return renderVertrauen(); }
     if (d.stelle) { S.eco.stelle = d.stelle; S.eco.brutto = STELLE[d.stelle]; document.querySelector('[data-eco="brutto"]').value = S.eco.brutto; return renderAll(); }
+    if (d.mode) { S.mode = d.mode; if (d.mode === "streuen" && S.scen === null && liveMean() === null) S.scen = 2; return renderAll(); }
     if (t.hasAttribute("data-close")) { S.selected = null; return renderAll(); }
     if (t.hasAttribute("data-more")) { S.showAll = !S.showAll; return renderAll(); }
-    if (t.hasAttribute("data-gps")) { S.gpsFault = !S.gpsFault; return renderAll(); }
     if (d.site) { S.selected = d.site; const s = D.sites.find((x) => x.id === d.site); map.panTo([s.lat, s.lon]); renderAll(); }
   });
   const betrieb = $("#tab-betrieb");
@@ -423,9 +470,8 @@
   });
   split.addEventListener("pointerup", () => { split.classList.remove("drag"); map.invalidateSize(); });
 
-  const names = { valid: "gültig", expiring: "läuft ab", expired: "abgelaufen", uncalibrated: "nie kalibriert" };
-  $("#legend").innerHTML = Object.keys(names).map((k) => `<span><i style="background:${COL[k]}"></i>${names[k]}</span>`).join("")
-    + `<span>${diamond(RUST, 14)} Referenz</span>`;
+  $("#wi").addEventListener("input", (e) => { S.scen = +e.target.value; renderAll(); });
+  $("#wlive").addEventListener("click", () => { S.scen = null; renderAll(); });
 
   $("#live-btn").addEventListener("click", () => { $("#live-pop").hidden = !$("#live-pop").hidden; if (!$("#live-pop").hidden) $("#live-key").focus(); });
   $("#live-go").addEventListener("click", () => { const k = $("#live-key").value.trim(); if (!k) { $("#live-status").textContent = "Bitte Schlüssel eingeben."; return; } fetchLive(k); });

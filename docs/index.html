@@ -28,6 +28,14 @@
     <section class="mapwrap">
       <div id="map"></div>
       <div id="toast" class="toast" hidden></div>
+      <div class="modebar">
+        <div class="mseg"><button data-mode="vertrauen" class="on">Vertrauen</button><button data-mode="streuen">Streuen</button></div>
+        <div id="whatif" class="whatif" hidden>
+          <div class="wt"><span>Was wäre wenn <i id="wl"></i></span><b id="wv"></b></div>
+          <input type="range" id="wi" min="-8" max="12" step="0.5" aria-label="Temperatur">
+          <button class="link" id="wlive" hidden>Live-Werte verwenden</button>
+        </div>
+      </div>
       <div class="legend" id="legend"></div>
       <div id="detail" class="detail" hidden></div>
     </section>
@@ -39,12 +47,10 @@
         <button role="tab" data-tab="betrieb" class="on">Betrieb</button>
         <button role="tab" data-tab="vertrauen">Vertrauen</button>
         <button role="tab" data-tab="kosten">Kosten</button>
-        <button role="tab" data-tab="grenzen">Grenzen</button>
       </nav>
       <div class="panel" id="tab-betrieb"></div>
       <div class="panel" id="tab-vertrauen" hidden></div>
       <div class="panel" id="tab-kosten" hidden></div>
-      <div class="panel" id="tab-grenzen" hidden></div>
     </aside>
   </main>
 </div>
