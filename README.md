@@ -27,7 +27,9 @@ Dann `http://localhost:8765` öffnen. Auf GitHub Pages: Einstellungen → Pages 
 trustband/
 ├── analysis/
 │   ├── analyze.py                  Analyse der Rohdaten (Rohdaten nicht im Repo)
-│   └── results.json                Fehler und 90-%-Band je Eichalter
+│   ├── daily_bands.py              Band je Tag seit der Eichung -> bands_daily.json
+│   ├── results.json                Fehler und 90-%-Band je Eichalter
+│   └── bands_daily.json            Band pro Tag (Trichter)
 ├── scripts/
 │   └── build_dashboard_data.py     results.json + Standortliste -> docs/data/dashboard.js
 └── docs/                           Dashboard, direkt über GitHub Pages ausspielbar

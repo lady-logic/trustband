@@ -13,12 +13,21 @@
   <header>
     <span class="wm">TrustBand</span>
     <div class="grow"></div>
+    <button id="live-btn" class="livebtn"><i></i><span>Live-Daten</span></button>
     <div class="save"><span>Ersparnis in <i id="save-y">5</i> Jahren</span><b id="saving">–</b></div>
   </header>
+
+  <div id="live-pop" class="pop" hidden>
+    <b>Live-Daten aus niotix</b>
+    <input type="password" id="live-key" placeholder="API-Schlüssel" autocomplete="off" spellcheck="false">
+    <button class="btn" id="live-go">Abrufen</button>
+    <div id="live-status" class="cap"></div>
+  </div>
 
   <main>
     <section class="mapwrap">
       <div id="map"></div>
+      <div id="toast" class="toast" hidden></div>
       <div class="legend" id="legend"></div>
       <div id="detail" class="detail" hidden></div>
     </section>

@@ -21,6 +21,7 @@ REAL_SITES = {
     "138222": {"key": "schellbronner", "ref": ("refB", "Referenz B", "DL-CWS 26184")},
 }
 SKIP_IDS = {"130389"}  # Westtangente Südeingang: gleiche Koordinaten wie Arlinger Tunnel
+EXTRA_TWINS = {"172024": ["130389"]}  # zweiter Twin am selben Standort
 
 SIM_LAST_CAL_AGE = [3, 9, 24, 38, 14, 5, 27, 33, 8, 18, 4, 41, 11, 2, 21]
 SIM_SCALES = [0.8, 1.0, 1.25, 0.9, 1.15, 1.0, 0.85, 1.3, 1.05, 0.95, 1.2, 0.9, 1.1, 1.0, 0.8]
@@ -58,10 +59,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--api-md", default=str(HACK / "api_uebersicht.md"))
     ap.add_argument("--results", default=str(ROOT / "analysis" / "results.json"))
+    ap.add_argument("--twins", default=str(HACK / "niota_all_twins.json"))
     args = ap.parse_args()
 
     results = json.loads(Path(args.results).read_text(encoding="utf-8"))
+    daily = json.loads((ROOT / "analysis" / "bands_daily.json").read_text(encoding="utf-8"))
     raw_sites = parse_sites(Path(args.api_md))
+
+    twins = {str(t["id"]): t for t in json.loads(Path(args.twins).read_text(encoding="utf-8"))}
+    state_ids = lambda tid: [s["id"] for s in (twins.get(tid, {}).get("states") or []) if isinstance(s, dict) and "id" in s]
+    for s in raw_sites:
+        s["twins"] = {tid: state_ids(tid) for tid in [s["id"], *EXTRA_TWINS.get(s["id"], [])]}
 
     sites, refs, sim_i = [], [], 0
     for s in raw_sites:
@@ -88,6 +96,7 @@ def main():
         "calDays": results["cal_days"],
         "prices": PRICES,
         "bands": build_bands(results),
+        "daily": daily,
         "refs": refs,
         "sites": sites,
     }

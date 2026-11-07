@@ -28,10 +28,41 @@
   };
 
   function trustDays(site) {
-    for (const b of D.bands[site.profile].slice(0, 3)) {
-      if (Math.max(Math.abs(b.p05), Math.abs(b.p95)) * site.bandScale > S.tol) return b.from;
+    for (const r of D.daily[site.profile].slice(0, TRUST_CAP)) {
+      if (Math.max(Math.abs(r.p05), Math.abs(r.p95)) * site.bandScale > S.tol) return r.day;
     }
     return TRUST_CAP;
+  }
+
+  /* Trichter: Band (5.-95. Perzentil des Fehlers) je Tag seit der Eichung */
+  function funnel(rows, scale, tol, o) {
+    const W = o.w, H = o.h, DAYS = TRUST_CAP, ymax = o.mini ? 2.2 : 2.5;
+    const p = o.mini ? { l: 2, r: 2, t: 3, b: 3 } : { l: 40, r: 12, t: 14, b: 30 };
+    const X = (d) => p.l + (d / DAYS) * (W - p.l - p.r);
+    const Y = (v) => p.t + (1 - (v + ymax) / (2 * ymax)) * (H - p.t - p.b);
+    const pts = rows.slice(0, DAYS + 1);
+    const poly = pts.map((r) => `${X(r.day)},${Y(r.p95 * scale)}`).concat(pts.map((r) => `${X(r.day)},${Y(r.p05 * scale)}`).reverse()).join(" ");
+    const zy = Y(tol), zh = Y(-tol) - Y(tol), zw = W - p.l - p.r;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Vertrauensband über die Zeit"><defs><clipPath id="c${o.id}"><rect x="${p.l}" y="${zy}" width="${zw}" height="${zh}"/></clipPath></defs>
+      <rect x="${p.l}" y="${zy}" width="${zw}" height="${zh}" fill="rgba(47,107,71,.09)"/>
+      <polygon points="${poly}" fill="${COL.expired}" fill-opacity=".42"/>
+      <polygon points="${poly}" fill="${COL.valid}" fill-opacity=".6" clip-path="url(#c${o.id})"/>
+      <line x1="${p.l}" x2="${W - p.r}" y1="${Y(0)}" y2="${Y(0)}" stroke="#8A867F" stroke-dasharray="3 4"/>
+      <line x1="${p.l}" x2="${W - p.r}" y1="${zy}" y2="${zy}" stroke="${COL.valid}" stroke-width="${o.mini ? 1 : 2}"/>
+      <line x1="${p.l}" x2="${W - p.r}" y1="${zy + zh}" y2="${zy + zh}" stroke="${COL.valid}" stroke-width="${o.mini ? 1 : 2}"/>`;
+    if (o.mini) {
+      if (o.age !== null && o.age !== undefined) {
+        const a = Math.min(o.age, DAYS);
+        s += `<line x1="${X(a)}" x2="${X(a)}" y1="${p.t}" y2="${H - p.b}" stroke="${RUST}" stroke-width="2"/><circle cx="${X(a)}" cy="${Y(0)}" r="4" fill="${RUST}" stroke="#fff" stroke-width="1.5"/>`;
+      }
+    } else {
+      s += `<text x="${p.l - 6}" y="${zy + 4}" text-anchor="end">+${num(tol, 1)}</text><text x="${p.l - 6}" y="${zy + zh + 4}" text-anchor="end">−${num(tol, 1)}</text><text x="${p.l - 6}" y="${Y(0) + 4}" text-anchor="end">0</text>`;
+      for (const d of [0, 7, 14, 21, 30]) s += `<text x="${X(d)}" y="${H - 8}" text-anchor="middle">${d}</text>`;
+      s += `<text x="${W - p.r}" y="${H - 8}" text-anchor="end" style="font-weight:700">Tage seit Eichung</text>`;
+      if (o.trust < DAYS) s += `<line x1="${X(o.trust)}" x2="${X(o.trust)}" y1="${p.t}" y2="${H - p.b}" stroke="${RUST}" stroke-width="2.5" stroke-dasharray="6 4"/><text x="${X(o.trust) + (o.trust > 20 ? -6 : 6)}" y="${p.t + 10}" text-anchor="${o.trust > 20 ? "end" : "start"}" style="fill:${RUST};font-weight:800;font-size:13px">Vertrauen endet Tag ${o.trust}</text>`;
+      s += `<line id="fcur" y1="${p.t}" y2="${H - p.b}" stroke="#141412" stroke-width="1.5" visibility="hidden"/>`;
+    }
+    return s + "</svg>";
   }
 
   function enrich() {
@@ -73,6 +104,101 @@
     return { ref: best.r, km: best.d * 1.3 };
   }
 
+  /* ---------- Live-Daten (niotix) ---------- */
+  const API = "https://xapi.niota.io/xapi/v1/states/";
+  const PREFER = ["surface_temperature", "temperature_target"];
+  const LIVE = { data: {}, at: null, busy: false, pref: {} };
+  try { Object.assign(LIVE, JSON.parse(localStorage.getItem("trustband.live") || "{}")); } catch (_) {}
+
+  function liveOf(s) {
+    const list = LIVE.data[s.id] || [];
+    for (const k of PREFER) { const v = list.find((x) => x.key === k); if (v) return v; }
+    return list.find((x) => x.unit === "°C") || null;
+  }
+  const hhmm = (iso) => new Date(iso).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  function liveLine(s) {
+    const v = liveOf(s);
+    return v ? `<div class="live">Jetzt <b>${num(v.value, 1)} ${v.unit}</b><small>${v.name} · ${hhmm(v.time)}</small></div>` : "";
+  }
+  const tip = (s) => { const v = liveOf(s); return v ? `${s.name} · ${num(v.value, 1)} ${v.unit}` : s.name; };
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let toastTimer = null;
+  function toast(msg, frac, kind) {
+    const el = $("#toast");
+    clearTimeout(toastTimer);
+    el.hidden = false;
+    el.className = "toast " + (kind || "");
+    el.innerHTML = `<span>${msg}</span>${frac == null ? "" : `<div class="tb"><div style="width:${Math.round(frac * 100)}%"></div></div>`}`;
+    if (kind === "ok" || kind === "warn") toastTimer = setTimeout(() => (el.hidden = true), 5000);
+  }
+  function flash(s, v) {
+    const m = L.marker([s.lat, s.lon], { interactive: false, zIndexOffset: 900,
+      icon: L.divIcon({ className: "", iconSize: [60, 60], iconAnchor: [30, 30],
+        html: `<div class="flash"></div><div class="valtag">${num(v.value, 1)} °</div>` }) }).addTo(flashLayer);
+    setTimeout(() => flashLayer.removeLayer(m), 3400);
+  }
+
+  async function fetchLive(key) {
+    const twins = [];
+    for (const s of D.sites) for (const [tid, ids] of Object.entries(s.twins)) twins.push({ s, tid, ids });
+    const go = $("#live-go"), st = $("#live-status"), pop = $("#live-pop");
+    LIVE.busy = true; go.disabled = true;
+    pop.hidden = true;
+    const data = {};
+    let done = 0, ok = 0, fail = 0, fatal = null;
+    const total = twins.length;
+    const progress = () => { st.textContent = `Abruf ${done} von ${total}`; toast(`Live-Abruf ${done} von ${total}`, done / total); };
+    updateLiveBtn("busy"); progress();
+
+    const get = async (id) => {
+      const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 8000);
+      try {
+        const r = await fetch(API + id, { headers: { "X-API-Key": key, Accept: "application/json" }, signal: ctl.signal });
+        if (r.status === 503) throw Object.assign(new Error("Schlüssel ungültig."), { fatal: true });
+        if (r.status === 401 || r.status === 429) throw Object.assign(new Error("Abruflimit erreicht. Eine Minute warten, dann erneut."), { fatal: true });
+        if (!r.ok) return null;
+        const d = (await r.json()).data || {}, m = d.meta || {}, b = d.binding || {};
+        return typeof b.value === "number" ? { key: m.key, name: m.name, unit: m.unit || "", value: b.value, time: b.time } : null;
+      } finally { clearTimeout(to); }
+    };
+
+    await Promise.all(twins.map(async ({ s, tid, ids }, i) => {
+      await sleep(i * 120);
+      if (fatal) return;
+      const order = LIVE.pref[tid] ? [LIVE.pref[tid], ...ids.filter((x) => x !== LIVE.pref[tid])] : ids;
+      let pick = null, fallback = null;
+      try {
+        for (const id of order) {
+          const v = await get(id);
+          if (v && PREFER.includes(v.key)) { pick = v; LIVE.pref[tid] = id; break; }
+          if (v && v.unit === "°C" && !fallback) fallback = v;
+        }
+        pick = pick || fallback;
+        if (pick) { (data[s.id] = data[s.id] || []).push(pick); flash(s, pick); ok++; } else fail++;
+      } catch (e) { if (e.fatal) fatal = e.message; else fail++; }
+      finally { done++; progress(); }
+    }));
+
+    LIVE.busy = false; go.disabled = false;
+    const problem = fatal || (ok === 0 ? "Keine Antwort von niotix. Verbindung prüfen." : null);
+    if (problem) { st.textContent = problem; toast(problem, null, "bad"); updateLiveBtn("err"); pop.hidden = false; return; }
+    LIVE.data = data; LIVE.at = new Date().toISOString();
+    try { localStorage.setItem("trustband.live", JSON.stringify({ data, at: LIVE.at, pref: LIVE.pref })); } catch (_) {}
+    $("#live-key").value = "";
+    const msg = `${ok} von ${total} Sensoren aktualisiert` + (fail ? ` · ${fail} ohne Antwort` : "");
+    st.textContent = msg; toast(msg, null, fail ? "warn" : "ok");
+    updateLiveBtn(); renderAll();
+  }
+
+  function updateLiveBtn(state) {
+    const b = $("#live-btn");
+    b.classList.toggle("on", !!LIVE.at && !state);
+    b.classList.toggle("busy", state === "busy");
+    b.classList.toggle("err", state === "err");
+    b.querySelector("span").textContent = state === "busy" ? "Abruf läuft …" : state === "err" ? "Live-Fehler" : LIVE.at ? "Live · " + new Date(LIVE.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "Live-Daten";
+  }
+
   /* ---------- Karte ---------- */
   const map = L.map("map", { zoomControl: false }).setView([48.87, 8.70], 12);
   L.control.zoom({ position: "bottomright" }).addTo(map);
@@ -86,6 +212,7 @@
   const markers = {};
   const routeLayer = L.layerGroup().addTo(map);
   const refLayer = L.layerGroup().addTo(map);
+  const flashLayer = L.layerGroup().addTo(map);
   const diamond = (c, s) => `<svg width="${s}" height="${s}" viewBox="0 0 12 12" style="vertical-align:-2px"><path d="M6 1L11 6L6 11L1 6Z" fill="#fff" stroke="${c}" stroke-width="1.5"/><path d="M6 4L9 6L6 9L3 6Z" fill="${c}"/></svg>`;
 
   function refreshMarkers(sites) {
@@ -95,9 +222,9 @@
       const icon = L.divIcon({ className: "", iconSize: [18, 18], iconAnchor: [9, 9], html: `<div class="mk ${cls}" style="background:${COL[s.status]}"></div>` });
       if (!markers[s.id]) {
         markers[s.id] = L.marker([s.lat, s.lon], { icon }).addTo(map)
-          .bindTooltip(s.name, { direction: "top", offset: [0, -9] })
+          .bindTooltip(tip(s), { direction: "top", offset: [0, -9] })
           .on("click", () => { S.selected = S.selected === s.id ? null : s.id; renderAll(); });
-      } else markers[s.id].setIcon(icon);
+      } else { markers[s.id].setIcon(icon); markers[s.id].setTooltipContent(tip(s)); }
     }
     routeLayer.clearLayers();
     if (hotSite) {
@@ -165,6 +292,7 @@
         <div><div class="nm">${s.name}</div><div class="st" style="color:${c}">${LABEL[s.status]}</div></div>
         <button class="x" data-close aria-label="Schließen">×</button></div>
       <div class="g"><div><small>Letzte Eichung</small><b>${last}</b></div><div><small>Noch gültig</small><b>${rem}</b></div></div>
+      ${liveLine(s)}<div class="fun">${funnel(D.daily[s.profile], s.bandScale, S.tol, { w: 260, h: 64, mini: true, age: s.lastCalAge, id: "m" })}</div>
       ${n ? `<div class="nx">${n.ref.name} fährt hin · ${num(n.km, 1)} km</div>` : ""}
       <div class="src">${s.real ? "Echte Messdaten" : "Simuliert"} · Vertrauensdauer ${s.trust >= TRUST_CAP ? "≥ " : ""}${s.trust} Tage</div>`;
   }
@@ -175,7 +303,7 @@
       <div id="v-big"></div>
       <div class="slider"><div class="t"><span>Toleranz</span><b id="tolv"></b></div>
         <input type="range" id="tol" min="0.8" max="2" step="0.05" value="${S.tol}" aria-label="Toleranz"></div>
-      <div class="bars" id="v-bars"></div>`;
+      <div class="fun" id="v-funnel"></div><div class="hv" id="v-hover"></div>`;
     $("#tol").addEventListener("input", (e) => { S.tol = +e.target.value; renderAll(); });
   }
 
@@ -185,14 +313,21 @@
     const real = D.sites.find((s) => s.profile === S.vsite && s.real), t = trustDays(real), bands = D.bands[S.vsite].slice(0, 3);
     $("#v-big").innerHTML = `<div class="big">${t >= TRUST_CAP ? "≥ " : ""}${t}<small>Tage Vertrauen</small></div>
       <div class="cap">Fehler ${num(bands[0].mae_roh)} → ${num(bands[0].mae_cal)} °C nach Kalibrierung</div>`;
-    const lo = -2, hi = 2, pos = (v) => ((v - lo) / (hi - lo)) * 100;
-    $("#v-bars").innerHTML = bands.map((b) => {
-      const hw = Math.max(Math.abs(b.p05), Math.abs(b.p95)), within = hw <= S.tol;
-      return `<div class="bar"><span class="lb">${b.label}</span>
-        <div class="tr"><div class="zone" style="left:${pos(-S.tol)}%;width:${pos(S.tol) - pos(-S.tol)}%"></div><div class="zero" style="left:${pos(0)}%"></div>
-          <div class="rg" style="left:${pos(b.p05)}%;width:${pos(b.p95) - pos(b.p05)}%;background:${within ? COL.valid : COL.expired}"></div></div>
-        <span class="v" style="color:${within ? COL.valid : COL.expired}">± ${num(hw, 1)}</span></div>`;
-    }).join("");
+    const rows = D.daily[S.vsite], W = 380, H = 250;
+    const box = $("#v-funnel");
+    box.innerHTML = funnel(rows, 1, S.tol, { w: W, h: H, trust: t, id: "big" });
+    const svg = box.firstChild, cur = svg.querySelector("#fcur"), hv = $("#v-hover");
+    hv.textContent = "Fahre über die Grafik";
+    const at = (e) => {
+      const r = svg.getBoundingClientRect(), x = ((e.clientX - r.left) / r.width) * W;
+      const day = Math.min(TRUST_CAP, Math.max(0, Math.round(((x - 40) / (W - 52)) * TRUST_CAP)));
+      const row = rows[day], X = 40 + (day / TRUST_CAP) * (W - 52);
+      cur.setAttribute("x1", X); cur.setAttribute("x2", X); cur.setAttribute("visibility", "visible");
+      const hw = Math.max(Math.abs(row.p05), Math.abs(row.p95));
+      hv.innerHTML = `Tag ${day}: ${num(row.p05, 1)} bis +${num(row.p95, 1)} °C <span style="color:${hw <= S.tol ? COL.valid : COL.expired}">${hw <= S.tol ? "im Vertrauen" : "außerhalb"}</span>`;
+    };
+    svg.addEventListener("pointermove", at);
+    svg.addEventListener("pointerleave", () => { cur.setAttribute("visibility", "hidden"); hv.textContent = "Fahre über die Grafik"; });
   }
 
   /* ---------- Kosten ---------- */
@@ -292,7 +427,13 @@
   $("#legend").innerHTML = Object.keys(names).map((k) => `<span><i style="background:${COL[k]}"></i>${names[k]}</span>`).join("")
     + `<span>${diamond(RUST, 14)} Referenz</span>`;
 
+  $("#live-btn").addEventListener("click", () => { $("#live-pop").hidden = !$("#live-pop").hidden; if (!$("#live-pop").hidden) $("#live-key").focus(); });
+  $("#live-go").addEventListener("click", () => { const k = $("#live-key").value.trim(); if (!k) { $("#live-status").textContent = "Bitte Schlüssel eingeben."; return; } fetchLive(k); });
+  $("#live-key").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#live-go").click(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#live-pop").hidden = true; });
+
   initVertrauen();
   initKosten();
+  updateLiveBtn();
   renderAll();
 })();
