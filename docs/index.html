@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrustBand Pforzheim</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="wm">TrustBand</span>
+    <div class="grow"></div>
+    <div class="save"><span>Ersparnis in <i id="save-y">5</i> Jahren</span><b id="saving">–</b></div>
+  </header>
+
+  <main>
+    <section class="mapwrap">
+      <div id="map"></div>
+      <div class="legend" id="legend"></div>
+      <div id="detail" class="detail" hidden></div>
+    </section>
+
+    <div id="split" role="separator" aria-orientation="vertical" title="Breite ziehen"></div>
+
+    <aside id="aside">
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="betrieb" class="on">Betrieb</button>
+        <button role="tab" data-tab="vertrauen">Vertrauen</button>
+        <button role="tab" data-tab="kosten">Kosten</button>
+        <button role="tab" data-tab="grenzen">Grenzen</button>
+      </nav>
+      <div class="panel" id="tab-betrieb"></div>
+      <div class="panel" id="tab-vertrauen" hidden></div>
+      <div class="panel" id="tab-kosten" hidden></div>
+      <div class="panel" id="tab-grenzen" hidden></div>
+    </aside>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="data/dashboard.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
