@@ -8,8 +8,13 @@
   const WD = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
   const fmt = (d) => `${WD[d.getDay()]} ${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.`;
 
-  const COL = { valid: "#2F6B47", expiring: "#B87A0E", expired: "#B02A2A", uncalibrated: "#8C8C8C" };
-  const LABEL = { valid: "Vertrauen gültig", expiring: "Läuft bald ab", expired: "Abgelaufen", uncalibrated: "Nie kalibriert" };
+  const COL = { valid: "#2F6B47", expiring: "#B87A0E", expired: "#B02A2A", uncalibrated: "#8C8C8C", calibrating: "#5B4B8A" };
+  const LABEL = { valid: "Vertrauen gültig", expiring: "Läuft bald ab", expired: "Abgelaufen", uncalibrated: "Nie kalibriert", calibrating: "Wird kalibriert" };
+
+  /* Kalibrierprotokoll (Prototyp: im Browser gespeichert) */
+  let CAL = {};
+  try { CAL = JSON.parse(localStorage.getItem("trustband.cal") || "{}"); } catch (_) {}
+  const saveCal = () => { try { localStorage.setItem("trustband.cal", JSON.stringify(CAL)); } catch (_) {} };
   const RUST = "#974C31";
   const TRUST_CAP = 30;
   const GPS_RADIUS_M = 30;
@@ -68,7 +73,13 @@
 
   function enrich() {
     return D.sites.map((s) => {
-      const trust = trustDays(s), age = s.lastCalAge;
+      const trust = trustDays(s), c = CAL[s.id];
+      if (c && c.start && !c.done) {
+        const calDay = Math.min(S.eco.calDays, Math.floor((Date.now() - c.start) / DAY) + 1);
+        return { ...s, trust, remaining: null, status: "calibrating", calDay };
+      }
+      if (c && c.done) s = { ...s, lastCalAge: Math.max(0, Math.floor((Date.now() - c.done) / DAY)) };
+      const age = s.lastCalAge;
       const remaining = age === null ? null : trust - age;
       let status = "valid";
       if (remaining === null) status = "uncalibrated";
@@ -88,20 +99,27 @@
 
   function waitingOf(sites) {
     const g = { expired: 0, uncalibrated: 1, expiring: 2 };
-    return sites.filter((s) => s.status !== "valid")
+    return sites.filter((s) => s.status !== "valid" && s.status !== "calibrating")
       .sort((a, b) => g[a.status] - g[b.status] || (b.frost - a.frost) || ((a.remaining ?? 0) - (b.remaining ?? 0)));
   }
 
+  const busyRefs = () => new Set(Object.values(CAL).filter((c) => c.start && !c.done && c.ref).map((c) => c.ref));
+
+  /* Position der Referenz: bei ihrem Heimatstandort oder, während einer Kalibrierung, neben dem Sensor */
   function gpsOf(r) {
-    const gps = { lat: r.lat + 0.00003, lon: r.lon + 0.00002 };
+    const run = Object.entries(CAL).find(([, c]) => c.start && !c.done && c.ref === r.id);
+    const sid = run ? run[0] : r.site, base = run ? D.sites.find((s) => s.id === sid) : r;
+    const gps = { lat: base.lat + 0.00003, lon: base.lon + 0.00002 };
     let near = null;
     for (const s of D.sites) { const m = km(gps, s) * 1000; if (!near || m < near.m) near = { s, m }; }
-    return { ...gps, near: near.s, m: Math.round(near.m), ok: near.m <= GPS_RADIUS_M && near.s.id === r.site };
+    return { ...gps, near: near.s, m: Math.round(near.m), site: D.sites.find((s) => s.id === sid), ok: near.m <= GPS_RADIUS_M && near.s.id === sid };
   }
 
   function nearestRef(site) {
+    const busy = busyRefs();
     let best = null;
-    for (const r of D.refs) { const d = km(r, site); if (!best || d < best.d) best = { r, d }; }
+    for (const r of D.refs) { if (busy.has(r.id)) continue; const d = km(r, site); if (!best || d < best.d) best = { r, d }; }
+    if (!best) return null;
     return { ref: best.r, km: best.d * 1.3 };
   }
 
@@ -177,7 +195,7 @@
       sites.forEach((x) => { const d = decide(x); if (d) cnt[d.kind]++; });
       items = Object.keys(DEC).map((k) => `<span><i style="background:${DEC[k].c}"></i>${DEC[k].l.split(":")[0]} ${cnt[k]}</span>`);
     } else {
-      const names = { valid: "gültig", expiring: "läuft ab", expired: "abgelaufen", uncalibrated: "nie kalibriert" };
+      const names = { valid: "gültig", expiring: "läuft ab", expired: "abgelaufen", uncalibrated: "nie kalibriert", calibrating: "wird kalibriert" };
       items = Object.keys(names).map((k) => `<span><i style="background:${COL[k]}"></i>${names[k]}</span>`);
     }
     $("#legend").innerHTML = items.join("") + `<span>${diamond(RUST, 14)} Referenz</span>`;
@@ -293,8 +311,9 @@
       } else { markers[s.id].setIcon(icon); markers[s.id].setTooltipContent(tip(s)); }
     }
     routeLayer.clearLayers();
-    if (hotSite) {
-      const { ref } = nearestRef(hotSite), g = gpsOf(ref);
+    const hotRef = hotSite && nearestRef(hotSite);
+    if (hotRef) {
+      const g = gpsOf(hotRef.ref);
       L.polyline([[g.lat, g.lon], [hotSite.lat, hotSite.lon]],
         { color: RUST, weight: 5, dashArray: "10 8", opacity: 0.95, interactive: false }).addTo(routeLayer);
       L.marker([hotSite.lat, hotSite.lon], { interactive: false, zIndexOffset: -100,
@@ -322,10 +341,10 @@
   }
 
   function renderBetrieb(sites, waiting) {
-    const ok = sites.filter((s) => s.status === "valid").length;
+    const ok = sites.filter((s) => s.status === "valid").length, running = sites.filter((s) => s.status === "calibrating");
     const stat = (n, l, c) => `<div class="stat"><b style="color:${c}">${n}</b><span>${l}</span></div>`;
     const refs = D.refs.map((r) => {
-      const g = gpsOf(r), site = D.sites.find((s) => s.id === r.site);
+      const g = gpsOf(r), site = g.site;
       return `<div class="row"><span>${diamond(g.ok ? RUST : COL.expired, 18)}</span>
         <div class="mid"><div class="nm">${r.name}</div>
         <div class="s">${g.ok ? `bei ${site.name} · ${g.m} m` : `${g.m} m neben ${site.name}`}</div></div>
@@ -336,13 +355,15 @@
       const n = nearestRef(w);
       return `<div class="row click ${S.hot === w.id ? "hot" : ""}" data-site="${w.id}"><span class="dot" style="background:${COL[w.status]}"></span>
         <div class="mid"><div class="nm">${w.name}</div><div class="s">${urgencyText(w)}${w.frost ? " · Brücke" : ""}</div></div>
-        <div class="r">${n.ref.name.replace("Referenz ", "Ref. ")}<br>${num(n.km, 1)} km</div></div>`;
+        <div class="r">${n ? `${n.ref.name.replace("Referenz ", "Ref. ")}<br>${num(n.km, 1)} km` : "keine Ref. frei"}</div></div>`;
     }).join("") || '<div class="empty">Alle Sensoren sind im Vertrauensband.</div>';
     const more = waiting.length > 5 ? `<button class="link" data-more>${S.showAll ? "Weniger anzeigen" : `Alle ${waiting.length} anzeigen`}</button>` : "";
     $("#tab-betrieb").innerHTML = `
-      <div class="stats">${stat(ok, "gültig", COL.valid)}${stat(waiting.length, "Warteliste", COL.expired)}${stat(D.refs.length, "Referenzen frei", RUST)}</div>
+      <div class="stats">${stat(ok, "gültig", COL.valid)}${stat(waiting.length, "Warteliste", COL.expired)}${stat(Math.max(0, D.refs.length - running.length), "Referenzen frei", RUST)}</div>
+      ${running.length ? `<div class="sh">In Kalibrierung</div>${running.map((s) => `<div class="row click" data-site="${s.id}"><span class="dot" style="background:${COL.calibrating}"></span><div class="mid"><div class="nm">${s.name}</div><div class="s">Tag ${s.calDay} von ${S.eco.calDays}</div></div></div>`).join("")}` : ""}
       <div class="sh">Warteliste</div>${wl}${more}
-      <div class="sh">Referenzsensoren</div>${refs}`;
+      <div class="sh">Referenzsensoren</div>${refs}
+      <button class="link" data-reset>Demo zurücksetzen</button>`;
   }
 
   function renderDetail(sites) {
@@ -351,8 +372,14 @@
     el.hidden = false;
     const c = COL[s.status];
     const rem = s.remaining === null ? "–" : s.remaining < 0 ? `${-s.remaining} T. überfällig` : `${s.remaining} Tage`;
-    const last = s.lastCalAge === null ? "nie" : s.lastCalAge === 0 ? "laufend" : fmt(new Date(TODAY - s.lastCalAge * DAY));
-    const n = s.status !== "valid" ? nearestRef(s) : null;
+    const last = s.lastCalAge === null ? "nie" : s.lastCalAge === 0 ? "heute" : fmt(new Date(TODAY - s.lastCalAge * DAY));
+    const n = s.status !== "valid" && s.status !== "calibrating" ? nearestRef(s) : null;
+    const myRef = D.refs.find((r) => r.id === (CAL[s.id] || {}).ref);
+    const nOwn = (CAL[s.id] || {}).n || 0;
+    const bandSrc = s.real ? "eigene Messdaten" : `Pilotprofil ${s.profile === "arlinger" ? "Arlinger" : "Schellbronner"}`;
+    const calBtn = s.status === "calibrating"
+      ? `<div class="cal"><div class="calt">${myRef ? myRef.name : "Referenz"} steht am Sensor · Tag ${s.calDay} von ${S.eco.calDays}</div><div class="btns"><button class="btn" data-cal="done">Kalibrierung abschließen</button><button class="btn ghost" data-cal="cancel">Abbrechen</button></div></div>`
+      : s.status !== "valid" ? `<div class="cal"><div class="btns"><button class="btn" data-cal="start">Kalibrierung starten</button></div></div>` : "";
     el.innerHTML = `
       <div class="hd"><span class="dot" style="background:${c};margin-top:6px"></span>
         <div><div class="nm">${s.name}</div><div class="st" style="color:${c}">${LABEL[s.status]}</div></div>
@@ -360,7 +387,8 @@
       <div class="g"><div><small>Letzte Eichung</small><b>${last}</b></div><div><small>Noch gültig</small><b>${rem}</b></div></div>
       ${S.mode === "streuen" ? streuBlock(s) : liveLine(s) + `<div class="fun">${funnel(D.daily[s.profile], s.bandScale, S.tol, { w: 260, h: 64, mini: true, age: s.lastCalAge, id: "m", sim: !s.real })}</div>`}
       ${n ? `<div class="nx">${n.ref.name} fährt hin · ${num(n.km, 1)} km</div>` : ""}
-      <div class="src">${s.real ? "Echte Messdaten" : "Simuliert"} · Vertrauensdauer ${s.trust >= TRUST_CAP ? "≥ " : ""}${s.trust} Tage</div>`;
+      ${calBtn}
+      <div class="src">${s.real ? "Echte Messdaten" : "Simuliert"} · Vertrauensdauer ${s.trust >= TRUST_CAP ? "≥ " : ""}${s.trust} Tage<br>Band: ${bandSrc} · eigene Messungen: ${nOwn}</div>`;
   }
 
   function initVertrauen() {
@@ -443,9 +471,23 @@
 
   /* ---------- Events ---------- */
   document.addEventListener("click", (e) => {
-    const t = e.target.closest("[data-close],[data-mode],[data-tab],[data-more],[data-vsite],[data-stelle],.row[data-site]");
+    const t = e.target.closest("[data-close],[data-mode],[data-tab],[data-more],[data-vsite],[data-stelle],[data-cal],[data-reset],.row[data-site]");
     if (!t) return;
     const d = t.dataset;
+    if (t.hasAttribute("data-reset")) { CAL = {}; saveCal(); toast("Kalibrierungen zurückgesetzt.", null, "ok"); return renderAll(); }
+    if (d.cal) {
+      const id = S.selected, prev = CAL[id] || {}, site = D.sites.find((x) => x.id === id);
+      if (d.cal === "start") {
+        const n = nearestRef(site);
+        if (!n) { toast("Keine Referenz frei. Erst eine Kalibrierung abschließen.", null, "warn"); return; }
+        CAL[id] = { start: Date.now(), ref: n.ref.id, n: prev.done ? (prev.n || 0) + 1 : prev.n || 0 };
+        toast(`${n.ref.name} wird zu ${site.name} gebracht.`, null, "ok");
+      }
+      else if (d.cal === "done") { CAL[id] = { done: Date.now(), n: prev.n || 0 }; toast(`${site.name} kalibriert. Referenz ist wieder frei.`, null, "ok"); }
+      else { delete CAL[id]; }
+      saveCal();
+      return renderAll();
+    }
     if (d.tab) return switchTab(d.tab);
     if (d.vsite) { S.vsite = d.vsite; return renderVertrauen(); }
     if (d.stelle) { S.eco.stelle = d.stelle; S.eco.brutto = STELLE[d.stelle]; document.querySelector('[data-eco="brutto"]').value = S.eco.brutto; return renderAll(); }

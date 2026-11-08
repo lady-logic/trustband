@@ -11,6 +11,36 @@ Prototyp für den Smart City Hackathon Pforzheim 2026, Challenge "Präziser Wint
 3. Die Restunsicherheit wird als **Band** angegeben, das mit dem Eichalter wächst. Solange das Band innerhalb der Toleranz bleibt, gilt der Sensor als vertrauenswürdig.
 4. Danach wandert der Referenzsensor zum nächsten Standort. Das Dashboard schlägt vor, wohin.
 
+## Methode
+
+Das Vertrauensband wird per **Rückrechnung (Backtest)** aus echten Paardaten von Referenz und günstigem Sensor gelernt. Wir simulieren dazu, wie es gewesen wäre, wenn man jede Woche kalibriert hätte, und messen danach, wie weit der günstige Sensor von der Referenz abweicht.
+
+```mermaid
+flowchart LR
+    A["Rohdaten<br/>Referenz + günstiger Sensor<br/>10-Minuten-Raster"] --> B["Kalibrierung nachspielen<br/>alle 7 Tage, 3 Tage Fenster<br/>Korrektur y = a·x + b"]
+    B --> C["Fehler messen<br/>korrigiert minus Referenz<br/>je Tag seit Kalibrierung"]
+    C --> D["Nur Kältebereich<br/>Referenz unter 3 °C"]
+    D --> E["Band je Tag<br/>5. bis 95. Perzentil<br/>90 % der Fehler"]
+    E --> F["Vertrauensdauer<br/>erster Tag außerhalb<br/>der Toleranz"]
+    F --> G["Dashboard<br/>Warteliste, Streuen, Kosten"]
+```
+
+## Lebenszyklus eines Sensors
+
+```mermaid
+stateDiagram-v2
+    [*] --> NieKalibriert
+    NieKalibriert --> WirdKalibriert: Referenz wird hingebracht
+    WirdKalibriert --> Gueltig: nach 3 Tagen Korrektur gelernt
+    Gueltig --> LaeuftAb: Band nähert sich der Toleranz
+    LaeuftAb --> Abgelaufen: Band über Toleranz
+    LaeuftAb --> WirdKalibriert: Referenz kommt rechtzeitig
+    Abgelaufen --> WirdKalibriert: Referenz wird hingebracht
+    Gueltig --> WirdKalibriert: vorzeitige Kalibrierung
+```
+
+Das Band startet als Pilotprofil der beiden vermessenen Standorte (Arlinger, Schellbronner). Jeder Referenzbesuch liefert eine Driftmessung für den jeweiligen Standort und macht das Band genauer.
+
 ## Dashboard ansehen
 
 Statische Seite, kein Build nötig:
